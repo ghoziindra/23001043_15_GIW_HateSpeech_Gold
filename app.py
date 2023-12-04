@@ -88,7 +88,7 @@ def upload_file():
     if file:
         # Read data.csv
         file_contents = StringIO(file.stream.read().decode('latin-1'))
-        data_df = pd.read_csv(file_contents).head(10)
+        data_df = pd.read_csv(file_contents).head
         abusive_df = pd.read_csv('./data/abusive.csv')
         
         abusive_words = abusive_df['ABUSIVE'].tolist()
