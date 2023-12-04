@@ -1,5 +1,5 @@
-from flask import Flask, request
-from flasgger import Swagger, swag_from
+from flask import Flask, request, jsonify
+from flasgger import Swagger, swag_from, LazyJSONEncoder, LazyString
 from werkzeug.utils import secure_filename
 import pandas as pd
 import regex as re
@@ -25,7 +25,7 @@ def insert_cleaned_tweet(tweets):
         
         sqlite_create_table_query = """CREATE TABLE IF NOT EXISTS
         cleaned_data (cleaned_tweet text)"""
-        sqlite_truncate_table_query = "TRUNCATE cleaned_data;"
+        sqlite_truncate_table_query = "TRUNCATE TABLE cleaned_data;"
         
         formatted_strings = [f'("{sentence.strip()}")' for sentence in tweets]
         result_string = ', '.join(formatted_strings)
@@ -52,6 +52,35 @@ def insert_cleaned_tweet(tweets):
 
 swagger = Swagger(app)
 
+@swag_from('./text_processing.yml', methods=['POST'])
+@app.route('/text-clean', methods=['POST'])
+def text_clean():
+    text = request.form.get('text')
+    text = re.sub(r'[^\w\s\d]', '', text) 
+    text = re.sub(r'USER|R', '', text) 
+    text = text.lower()
+    
+    abusive_df = pd.read_csv('./data/abusive.csv')    
+    abusive_words = abusive_df['ABUSIVE'].tolist()
+    
+    for word in abusive_words:
+        text = text.replace(fr"{word}", '*'*len(word))
+
+    made_up_words_df = pd.read_csv('./data/new_kamusalay.csv', header=None, names=['Original', 'Replacement'], encoding='latin-1')
+        # Replace made-up words
+    for index, row in made_up_words_df.iterrows():
+        text = re.sub(fr'\b{row["Original"]}\b', row["Replacement"], text)
+    
+    json_response = {
+        'status_code': 200,
+        'description': 'Cleansed text',
+        'data': text
+    }
+     
+    response_data = jsonify(json_response)
+    return response_data
+
+
 @swag_from('./text_processing_file.yml', methods=['POST'])
 @app.route('/upload-file', methods=['POST'])
 def upload_file():
@@ -59,11 +88,13 @@ def upload_file():
     if file:
         # Read data.csv
         file_contents = StringIO(file.stream.read().decode('latin-1'))
-        data_df = pd.read_csv(file_contents)
+        data_df = pd.read_csv(file_contents).head(10)
         abusive_df = pd.read_csv('./data/abusive.csv')
         
         abusive_words = abusive_df['ABUSIVE'].tolist()
-        data_df['Tweet'] = data_df['Tweet'].apply(lambda x: re.sub(r'[^\w\s]', '', x))
+        data_df['Tweet'] = data_df['Tweet'].apply(lambda x: re.sub(r'[^\w\s]', '', x)) # nge replace symbol
+        data_df['Tweet'] = data_df['Tweet'].apply(lambda x: re.sub(r'USER|RT', '', x))
+        data_df['Tweet'] = data_df['Tweet'].str.lower()
 
         for word in abusive_words:
             data_df['Tweet'] = data_df['Tweet'].str.replace(fr"{word}", '*'*len(word), case=False)
@@ -73,13 +104,27 @@ def upload_file():
 
         # Replace made-up words
         for index, row in made_up_words_df.iterrows():
-            data_df['Tweet'] = data_df['Tweet'].str.replace(fr'\b{row["Original"]}\b', row["Replacement"])
+            data_df['Tweet'] = data_df['Tweet'].apply(lambda x: re.sub(fr'\b{row["Original"]}\b', row["Replacement"], x))
+            
 
         tweets = data_df['Tweet']
-        insert_cleaned_tweet(tweets.to_list())
-        return tweets.to_json(orient='records')
+        insert_cleaned_tweet(tweets)
+        return jsonify({
+            "data": tweets.to_list(),
+            "status": 200,
+            "description": "cleaned text"
+        })
     else:
         return 'No file uploaded', 400
+    
+    # json_response = {
+    #     'status_code': 200,
+    #     'description': 'Cleansed text',
+    #     'data': re.sub(r'[^\w\s\d]', '', text)
+    # }
+    
+    # response_data = jsonify(json_response)
+    # return response_data
     
 if __name__ == '__main__':
     app.run()
